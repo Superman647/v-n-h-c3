@@ -90,6 +90,7 @@ interface AudioTask {
   isFetching: boolean;
   isReady: boolean;
   isFailed: boolean;
+  puterPlay?: () => Promise<void>;
   onStart?: () => void;
   onEnd?: () => void;
 }
@@ -131,6 +132,7 @@ const TEXT_API_ENDPOINTS = TEXT_API_BASE
 const TEXT_MODELS = ['openai', 'openai-large'];
 const ELEVENLABS_TTS_ENDPOINT = '/api/tts';
 const ELEVENLABS_VOICE_ID = (import.meta as any).env?.VITE_ELEVENLABS_VOICE_ID as string | undefined;
+const PUTER_ELEVENLABS_VOICE_ID = 'jdlxsPOZOHdGEfcItXVu';
 const USE_PUTER_GEMINI = (import.meta as any).env?.VITE_USE_PUTER_GEMINI !== 'false';
 
 export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
@@ -386,6 +388,67 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
     fetchNextAudio();
   };
 
+
+  const createPuterElevenLabsPlayer = async (text: string): Promise<(() => Promise<void>) | null> => {
+    const puter = (window as any).puter;
+    if (!puter?.ai?.txt2speech) return null;
+
+    const audioLike = await puter.ai.txt2speech(text, {
+      provider: 'elevenlabs',
+      voice: PUTER_ELEVENLABS_VOICE_ID,
+      model: 'eleven_multilingual_v2',
+      output_format: 'mp3_44100_128',
+    });
+
+    return async () => {
+      if (audioLike?.pause) {
+        try {
+          audioLike.currentTime = 0;
+        } catch {}
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        if (!audioLike || typeof audioLike.play !== 'function') {
+          reject(new Error('Puter txt2speech returned unsupported audio object'));
+          return;
+        }
+
+        const cleanup = () => {
+          if (typeof audioLike.removeEventListener === 'function') {
+            audioLike.removeEventListener('ended', onEnded);
+            audioLike.removeEventListener('error', onError);
+          }
+        };
+
+        const onEnded = () => {
+          cleanup();
+          resolve();
+        };
+
+        const onError = () => {
+          cleanup();
+          reject(new Error('Puter ElevenLabs playback failed'));
+        };
+
+        if (typeof audioLike.addEventListener === 'function') {
+          audioLike.addEventListener('ended', onEnded);
+          audioLike.addEventListener('error', onError);
+        }
+
+        Promise.resolve(audioLike.play())
+          .then(() => {
+            if (typeof audioLike.addEventListener !== 'function') {
+              resolve();
+            }
+          })
+          .catch((error: any) => {
+            cleanup();
+            reject(error);
+          });
+      });
+    };
+  };
+
   const fetchNextAudio = async () => {
     const task = audioTasks.current.find(t => !t.isFetching && !t.isReady && !t.isFailed);
     if (!task) return;
@@ -413,6 +476,22 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
       task.base64Audio = `data:audio/mpeg;base64,${btoa(binary)}`;
       task.isReady = true;
     } catch (error: any) {
+      console.warn('Server ElevenLabs TTS unavailable, trying Puter ElevenLabs:', error);
+      try {
+        const puterPlay = await createPuterElevenLabsPlayer(task.text);
+        if (!puterPlay) {
+          throw new Error('Puter ElevenLabs is unavailable in this browser');
+        }
+
+        task.puterPlay = puterPlay;
+        task.base64Audio = 'puter-elevenlabs';
+        task.isReady = true;
+        setTtsError(null);
+      } catch (puterError) {
+        console.warn('Puter ElevenLabs TTS unavailable:', puterError);
+        task.isFailed = true;
+        setTtsError('Không phát được audio: ElevenLabs server và Puter ElevenLabs đều đang lỗi.');
+      }
       console.warn('ElevenLabs TTS unavailable:', error);
       task.isFailed = true;
       setTtsError('TTS đang lỗi ở cả ElevenLabs và fallback miễn phí, nên tạm thời chưa phát được âm thanh.');
@@ -438,7 +517,9 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
       isPlayingAudio.current = true;
       if (task.onStart) task.onStart();
       try {
-        if (task.base64Audio.startsWith('data:audio/')) {
+        if (task.puterPlay) {
+          await task.puterPlay();
+        } else if (task.base64Audio.startsWith('data:audio/')) {
           await new Promise<void>((resolve, reject) => {
             const audio = new Audio(task.base64Audio);
             audio.onended = () => resolve();
@@ -471,6 +552,7 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
         setMessages([{
           id: 'system-reading',
           role: 'model',
+          text: '*Đang đọc đoạn thơ bằng giọng ElevenLabs (server/Puter)...*',
           text: '*Đang đọc đoạn thơ bằng giọng ElevenLabs...*',
         }]);
 
