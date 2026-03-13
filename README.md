@@ -13,6 +13,7 @@
 - **Text AI miễn phí** qua Pollinations (fallback model: `openai-large` -> `openai`) — không cần Gemini API key.
 - **Text AI miễn phí** qua Pollinations (`openai-large`) — không cần Gemini API key.
 - **Voice AI** qua ElevenLabs (voice ID mặc định: `jdlxsPOZOHdGEfcItXVu`), fallback client-side sang Puter ElevenLabs miễn phí (không dùng Web Speech).
+- **Voice AI** qua ElevenLabs (voice ID mặc định: `jdlxsPOZOHdGEfcItXVu`), fallback server-side sang Google Translate TTS (không dùng Web Speech).
 
 ## Run Locally
 
@@ -59,6 +60,7 @@ Nếu deploy trên Vercel và muốn ưu tiên serverless route, set `VITE_USE_L
 - Có thể set `VITE_TEXT_API_BASE` (ví dụ: `https://text.pollinations.ai`) để đổi text endpoint.
 - Cần set `ELEVENLABS_API_KEY` (Project Settings -> Environment Variables trên Vercel) để bật giọng ElevenLabs.
 - Nếu ElevenLabs server lỗi/quá hạn mức, app sẽ fallback client-side qua Puter ElevenLabs với voice ID `jdlxsPOZOHdGEfcItXVu` (không dùng Web Speech).
+- Nếu ElevenLabs lỗi/quá hạn mức, app sẽ fallback server-side sang Google Translate TTS (giọng tiếng Việt miễn phí).
 
 
 ## Troubleshooting: npm install bị chặn (403)
@@ -87,3 +89,4 @@ npm install
 2. Nếu công ty dùng policy chặn từ registry, cần nhờ admin **allowlist** package (`@elevenlabs/elevenlabs-js`) hoặc mirror vào private registry.
 
 3. Trong lúc chờ mở policy, app này đã hỗ trợ gọi ElevenLabs qua REST API server-side (`api/tts.ts`) và fallback Puter ElevenLabs client-side nên **không bắt buộc** phải cài SDK để chạy được TTS.
+3. Trong lúc chờ mở policy, app này đã hỗ trợ gọi ElevenLabs qua REST API server-side (`api/tts.ts`) nên **không bắt buộc** phải cài SDK để chạy được TTS.

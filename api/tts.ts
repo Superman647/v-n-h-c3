@@ -1,11 +1,14 @@
 const DEFAULT_ELEVENLABS_VOICE_ID = 'jdlxsPOZOHdGEfcItXVu';
 const ELEVENLABS_MODEL_ID = 'eleven_multilingual_v2';
 const ELEVENLABS_OUTPUT_FORMAT = 'mp3_44100_128';
+const GOOGLE_TTS_MAX_CHARS = 180;
 
 interface TtsBody {
   text?: string;
   voiceId?: string;
 }
+
+const toArrayBuffer = async (response: Response): Promise<ArrayBuffer> => response.arrayBuffer();
 
 const requestElevenLabs = async ({
   apiKey,
@@ -40,6 +43,22 @@ const requestElevenLabs = async ({
   });
 };
 
+const requestGoogleTranslateTts = async ({ text, signal }: { text: string; signal: AbortSignal }): Promise<Response> => {
+  const clippedText = text.slice(0, GOOGLE_TTS_MAX_CHARS);
+  const params = new URLSearchParams({
+    ie: 'UTF-8',
+    client: 'tw-ob',
+    tl: 'vi',
+    q: clippedText,
+  });
+
+  return fetch(`https://translate.google.com/translate_tts?${params.toString()}`, {
+    method: 'GET',
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+    signal,
+  });
+};
+
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -68,6 +87,9 @@ export default async function handler(req: any, res: any) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort('TTS timeout'), 45000);
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort('TTS timeout'), 45000);
+
   try {
     let lastError = 'Unknown ElevenLabs error';
 
@@ -90,11 +112,57 @@ export default async function handler(req: any, res: any) {
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-TTS-Provider', 'elevenlabs-server');
       res.setHeader('X-ElevenLabs-Voice-Id', voiceId);
+    const apiKey = process.env.ELEVENLABS_API_KEY;
+    const envVoiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
+    const requestedVoiceId = body.voiceId?.trim();
+    const voiceCandidates = Array.from(
+      new Set([requestedVoiceId, envVoiceId, DEFAULT_ELEVENLABS_VOICE_ID].filter(Boolean) as string[]),
+    );
+
+    const errors: string[] = [];
+
+    if (apiKey) {
+      for (const voiceId of voiceCandidates) {
+        const response = await requestElevenLabs({
+          apiKey,
+          text,
+          voiceId,
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          errors.push(`elevenlabs voice=${voiceId} status=${response.status} ${errText}`);
+          continue;
+        }
+
+        const arrayBuffer = await toArrayBuffer(response);
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('X-TTS-Provider', 'elevenlabs');
+        res.setHeader('X-ElevenLabs-Voice-Id', voiceId);
+        res.status(200).send(Buffer.from(arrayBuffer));
+        return;
+      }
+    } else {
+      errors.push('elevenlabs missing ELEVENLABS_API_KEY');
+    }
+
+    // Fallback miễn phí, không dùng Web Speech
+    const freeTtsResponse = await requestGoogleTranslateTts({ text, signal: controller.signal });
+    if (freeTtsResponse.ok) {
+      const arrayBuffer = await toArrayBuffer(freeTtsResponse);
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-TTS-Provider', 'google-translate');
       res.status(200).send(Buffer.from(arrayBuffer));
       return;
     }
 
     res.status(502).json({ error: `ElevenLabs error: ${lastError}` });
+    const freeTtsError = await freeTtsResponse.text();
+    errors.push(`google-translate status=${freeTtsResponse.status} ${freeTtsError}`);
+    res.status(502).json({ error: `All TTS providers failed: ${errors.join(' | ')}` });
   } catch (error: any) {
     res.status(502).json({ error: error?.message || String(error) });
   } finally {
