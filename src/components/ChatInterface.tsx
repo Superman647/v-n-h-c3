@@ -3,14 +3,13 @@ import Markdown from 'react-markdown';
 import { Send, Volume2, Loader2, ArrowLeft, User, Sparkles, BookOpen, X, Feather, Activity, Lightbulb } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { callPuterGemini, isPuterAvailable, streamPuterGemini } from '../lib/puter';
-import { callPuterGemini, isPuterAvailable } from '../lib/puter';
 
 const SYSTEM_PROMPT = `Định vị: Bạn là "Mentor Thẩm mĩ Thơ ca", một chuyên gia Văn học và là người dẫn dắt đầy tính sư phạm. Nhiệm vụ của bạn là hướng dẫn học sinh cấp 3 phát hiện và giải mã tín hiệu thẩm mĩ trong thơ hiện đại dựa trên phương pháp tri giác và tư duy ngôn ngữ nghệ thuật.
 
 Nguyên tắc tối thượng:
-1. KHÔNG BAO GIỜ phân tích hộ, giải thích sẵn hay viết thành bài văn dài.
+1. KHÔNG BAO GIỜ làm bài hộ trọn vẹn, nhưng vẫn phải giảng đủ sâu để học sinh hiểu bản chất nghệ thuật.
 2. KHÔNG BAO GIỜ đưa ra gợi ý hay đáp án trước khi học sinh trả lời.
-3. LUÔN LUÔN ĐẶT CÂU HỎI VÀ DỪNG LẠI CHỜ HỌC SINH TRẢ LỜI. Mỗi phản hồi chỉ dài tối đa 3-4 câu.
+3. LUÔN LUÔN ĐẶT CÂU HỎI VÀ DỪNG LẠI CHỜ HỌC SINH TRẢ LỜI. Mỗi phản hồi nên gồm 5-8 câu: 2-3 câu gợi mở, 2-3 câu giảng ngắn, và 1 câu hỏi tiếp theo.
 4. LUÔN KHUYẾN KHÍCH học sinh huy động vốn sống, vốn hiểu biết thực tế và trí tưởng tượng để đối chiếu với các tín hiệu trong thơ.
 
 CÔNG CỤ TƯƠNG TÁC (Đặt ở cuối câu trả lời):
@@ -91,6 +90,7 @@ interface AudioTask {
   isFetching: boolean;
   isReady: boolean;
   isFailed: boolean;
+  puterPlay?: () => Promise<void>;
   onStart?: () => void;
   onEnd?: () => void;
 }
@@ -129,8 +129,10 @@ const TEXT_API_ENDPOINTS = TEXT_API_BASE
   : SHOULD_USE_LOCAL_API
     ? ['/api/chat', DEFAULT_TEXT_ENDPOINT]
     : [DEFAULT_TEXT_ENDPOINT, '/api/chat'];
-const TEXT_MODELS = ['openai-large', 'openai'];
+const TEXT_MODELS = ['openai', 'openai-large'];
 const ELEVENLABS_TTS_ENDPOINT = '/api/tts';
+const ELEVENLABS_VOICE_ID = (import.meta as any).env?.VITE_ELEVENLABS_VOICE_ID as string | undefined;
+const PUTER_ELEVENLABS_VOICE_ID = 'jdlxsPOZOHdGEfcItXVu';
 const USE_PUTER_GEMINI = (import.meta as any).env?.VITE_USE_PUTER_GEMINI !== 'false';
 
 export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
@@ -142,8 +144,8 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [showMobilePoem, setShowMobilePoem] = useState(false);
   
-  const [initStage, setInitStage] = useState<'analyzing' | 'reading' | 'ready'>('analyzing');
-  const [poemTone, setPoemTone] = useState('');
+  const [initStage, setInitStage] = useState<'analyzing' | 'reading' | 'ready'>('reading');
+  const [poemTone] = useState('truyền cảm');
   const [readingPoemLine, setReadingPoemLine] = useState<number | null>(null);
   const activePoemLineRef = useRef<HTMLDivElement>(null);
   
@@ -152,6 +154,7 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
   const [summaryText, setSummaryText] = useState('');
   const [summaryData, setSummaryData] = useState<SummaryData | null>(null);
   const [rhythmLines, setRhythmLines] = useState<string[]>([]);
+  const [ttsError, setTtsError] = useState<string | null>(null);
   
   const initializedRef = useRef(false);
   const convoHistoryRef = useRef<PollinationsMessage[]>([]);
@@ -172,12 +175,6 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
       activePoemLineRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }, [readingPoemLine]);
-
-  useEffect(() => () => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-  }, []);
 
   const callTextAI = async (conversation: PollinationsMessage[]): Promise<string> => {
     let lastError: unknown;
@@ -204,7 +201,7 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
             body: JSON.stringify({
               model,
               messages: conversation,
-              temperature: 0.5,
+              temperature: 0.35,
             }),
             signal: controller.signal,
           });
@@ -239,33 +236,35 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
     throw lastError instanceof Error ? lastError : new Error('Text API failed with unknown error');
   };
 
-  const createChatSession = (historyRef: React.MutableRefObject<PollinationsMessage[]>): ChatSession => ({
-    sendMessageStream: async function* ({ message }) {
-      historyRef.current.push({ role: 'user', content: message });
+  const createChatSession = (historyRef: React.MutableRefObject<PollinationsMessage[]>): ChatSession => {
+    return {
+      sendMessageStream: async function* ({ message }) {
+        historyRef.current.push({ role: 'user', content: message });
 
-      if (USE_PUTER_GEMINI && isPuterAvailable()) {
-        try {
-          let puterText = '';
-          const stream = streamPuterGemini(historyRef.current);
-          for await (const part of stream) {
-            puterText += part;
-            yield { text: part };
-          }
+        if (USE_PUTER_GEMINI && isPuterAvailable()) {
+          try {
+            let puterText = '';
+            const stream = streamPuterGemini(historyRef.current);
+            for await (const part of stream) {
+              puterText += part;
+              yield { text: part };
+            }
 
-          if (puterText.trim()) {
-            historyRef.current.push({ role: 'assistant', content: puterText });
-            return;
+            if (puterText.trim()) {
+              historyRef.current.push({ role: 'assistant', content: puterText });
+              return;
+            }
+          } catch (error) {
+            console.warn('Puter stream failed, fallback to text API:', error);
           }
-        } catch (error) {
-          console.warn('Puter stream failed, fallback to text API:', error);
         }
-      }
 
-      const fullText = await withRetry(() => callTextAI(historyRef.current));
-      historyRef.current.push({ role: 'assistant', content: fullText });
-      yield { text: fullText };
-    }
-  });
+        const fullText = await withRetry(() => callTextAI(historyRef.current));
+        historyRef.current.push({ role: 'assistant', content: fullText });
+        yield { text: fullText };
+      },
+    };
+  };
 
   const parseMarkup = (text: string) => {
     const rhythmMatch = text.match(/\[RHYTHM:\s*(.*?)\]/);
@@ -375,42 +374,11 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
     });
   };
 
-  const playBrowserTTS = (text: string): Promise<void> => {
-    return new Promise((resolve, reject) => {
-      if (!('speechSynthesis' in window)) {
-        reject(new Error('SpeechSynthesis is not supported in this browser'));
-        return;
-      }
-
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'vi-VN';
-      utterance.rate = 1.08;
-      utterance.pitch = 1.15;
-
-      const allVoices = window.speechSynthesis.getVoices();
-      const femaleVoice = allVoices.find((voice) =>
-        voice.lang.toLowerCase().includes('vi') && /female|woman|nữ|mai|linh|vietnam/i.test(voice.name)
-      ) || allVoices.find((voice) => voice.lang.toLowerCase().includes('vi'));
-
-      if (femaleVoice) {
-        utterance.voice = femaleVoice;
-      }
-
-      utterance.onend = () => resolve();
-      utterance.onerror = (e) => reject(new Error(String(e.error || 'Speech synthesis failed')));
-      window.speechSynthesis.speak(utterance);
-    });
-  };
-
   const audioTasks = useRef<AudioTask[]>([]);
   const isPlayingAudio = useRef(false);
 
   const stopAllAudio = () => {
     audioTasks.current = [];
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
     isPlayingAudio.current = false;
   };
 
@@ -418,6 +386,67 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
     const task: AudioTask = { text, isFetching: false, isReady: false, isFailed: false, onStart, onEnd };
     audioTasks.current.push(task);
     fetchNextAudio();
+  };
+
+
+  const createPuterElevenLabsPlayer = async (text: string): Promise<(() => Promise<void>) | null> => {
+    const puter = (window as any).puter;
+    if (!puter?.ai?.txt2speech) return null;
+
+    const audioLike = await puter.ai.txt2speech(text, {
+      provider: 'elevenlabs',
+      voice: PUTER_ELEVENLABS_VOICE_ID,
+      model: 'eleven_multilingual_v2',
+      output_format: 'mp3_44100_128',
+    });
+
+    return async () => {
+      if (audioLike?.pause) {
+        try {
+          audioLike.currentTime = 0;
+        } catch {}
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        if (!audioLike || typeof audioLike.play !== 'function') {
+          reject(new Error('Puter txt2speech returned unsupported audio object'));
+          return;
+        }
+
+        const cleanup = () => {
+          if (typeof audioLike.removeEventListener === 'function') {
+            audioLike.removeEventListener('ended', onEnded);
+            audioLike.removeEventListener('error', onError);
+          }
+        };
+
+        const onEnded = () => {
+          cleanup();
+          resolve();
+        };
+
+        const onError = () => {
+          cleanup();
+          reject(new Error('Puter ElevenLabs playback failed'));
+        };
+
+        if (typeof audioLike.addEventListener === 'function') {
+          audioLike.addEventListener('ended', onEnded);
+          audioLike.addEventListener('error', onError);
+        }
+
+        Promise.resolve(audioLike.play())
+          .then(() => {
+            if (typeof audioLike.addEventListener !== 'function') {
+              resolve();
+            }
+          })
+          .catch((error: any) => {
+            cleanup();
+            reject(error);
+          });
+      });
+    };
   };
 
   const fetchNextAudio = async () => {
@@ -429,7 +458,7 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
       const response = await fetch(ELEVENLABS_TTS_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: task.text }),
+        body: JSON.stringify({ text: task.text, voiceId: ELEVENLABS_VOICE_ID }),
       });
 
       if (!response.ok) {
@@ -446,10 +475,23 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
       }
       task.base64Audio = `data:audio/mpeg;base64,${btoa(binary)}`;
       task.isReady = true;
-    } catch (error) {
-      console.warn('ElevenLabs TTS unavailable, fallback to browser voice:', error);
-      task.base64Audio = task.text;
-      task.isReady = true;
+    } catch (error: any) {
+      console.warn('Server ElevenLabs TTS unavailable, trying Puter ElevenLabs:', error);
+      try {
+        const puterPlay = await createPuterElevenLabsPlayer(task.text);
+        if (!puterPlay) {
+          throw new Error('Puter ElevenLabs is unavailable in this browser');
+        }
+
+        task.puterPlay = puterPlay;
+        task.base64Audio = 'puter-elevenlabs';
+        task.isReady = true;
+        setTtsError(null);
+      } catch (puterError) {
+        console.warn('Puter ElevenLabs TTS unavailable:', puterError);
+        task.isFailed = true;
+        setTtsError('Không phát được audio: ElevenLabs server và Puter ElevenLabs đều đang lỗi.');
+      }
     } finally {
       task.isFetching = false;
       playNextAudio();
@@ -471,15 +513,15 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
       isPlayingAudio.current = true;
       if (task.onStart) task.onStart();
       try {
-        if (task.base64Audio.startsWith('data:audio/')) {
+        if (task.puterPlay) {
+          await task.puterPlay();
+        } else if (task.base64Audio.startsWith('data:audio/')) {
           await new Promise<void>((resolve, reject) => {
             const audio = new Audio(task.base64Audio);
             audio.onended = () => resolve();
             audio.onerror = () => reject(new Error('Failed to play ElevenLabs audio'));
             audio.play().catch(reject);
           });
-        } else {
-          await playBrowserTTS(task.base64Audio);
         }
       } catch (e) {
         console.error("Play error", e);
@@ -501,30 +543,12 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
     const initializeMentoring = async () => {
       try {
         convoHistoryRef.current = [{ role: 'system', content: SYSTEM_PROMPT }];
-        
-        // 1. Analyze Tone
-        setInitStage('analyzing');
-        const tonePrompt = `Đoạn thơ: "${poem}"\nTác giả: ${author}\nHãy chỉ ra giọng điệu và cảm xúc chủ đạo của đoạn thơ này trong 1-3 từ (ví dụ: hào hùng, bi tráng, tha thiết, buồn bã, vui tươi...). Chỉ trả về các từ chỉ giọng điệu, không giải thích thêm.`;
 
-        let tone = 'truyền cảm';
-        try {
-          const toneResponse = await withRetry(() => callTextAI([
-            { role: 'system', content: 'Bạn là chuyên gia phân tích giọng điệu thơ. Trả lời cực ngắn gọn.' },
-            { role: 'user', content: tonePrompt }
-          ]));
-          tone = toneResponse.trim() || 'truyền cảm';
-        } catch (toneError) {
-          console.warn('Tone analysis failed, fallback to default tone:', toneError);
-        }
-
-        setPoemTone(tone);
-        
-        // 2. Read Poem
         setInitStage('reading');
         setMessages([{
           id: 'system-reading',
           role: 'model',
-          text: `*Đã phân tích giọng điệu: **${tone}**. Đang đọc đoạn thơ...*`
+          text: '*Đang đọc đoạn thơ bằng giọng ElevenLabs (server/Puter)...*',
         }]);
 
         setPlayingAudioId('system-reading');
@@ -537,7 +561,7 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
         );
 
         // Remove blocking wait to speed up chat initialization
-        // 3. Start Chat
+        // 2. Start Chat
         setInitStage('ready');
         const chat = createChatSession(convoHistoryRef);
         setChatSession(chat);
@@ -654,6 +678,7 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
     }
     
     stopAllAudio();
+    setTtsError(null);
     setPlayingAudioId(messageId);
     
     const sentences = text.match(/[^.?!]+[.?!]+(\s|$)/g) || [text];
@@ -948,6 +973,11 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
               </motion.div>
             )}
 
+            {ttsError && (
+              <div className="mx-4 mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {ttsError}
+              </div>
+            )}
             {isLoading && initStage === 'ready' && (
               <motion.div 
                 initial={{ opacity: 0 }} 
