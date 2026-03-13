@@ -130,6 +130,7 @@ const TEXT_API_ENDPOINTS = TEXT_API_BASE
     : [DEFAULT_TEXT_ENDPOINT, '/api/chat'];
 const TEXT_MODELS = ['openai', 'openai-large'];
 const ELEVENLABS_TTS_ENDPOINT = '/api/tts';
+const ELEVENLABS_VOICE_ID = (import.meta as any).env?.VITE_ELEVENLABS_VOICE_ID as string | undefined;
 const USE_PUTER_GEMINI = (import.meta as any).env?.VITE_USE_PUTER_GEMINI !== 'false';
 
 export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
@@ -394,7 +395,7 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
       const response = await fetch(ELEVENLABS_TTS_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: task.text }),
+        body: JSON.stringify({ text: task.text, voiceId: ELEVENLABS_VOICE_ID }),
       });
 
       if (!response.ok) {
