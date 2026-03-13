@@ -233,33 +233,35 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
     throw lastError instanceof Error ? lastError : new Error('Text API failed with unknown error');
   };
 
-  const createChatSession = (historyRef: React.MutableRefObject<PollinationsMessage[]>): ChatSession => ({
-    sendMessageStream: async function* ({ message }) {
-      historyRef.current.push({ role: 'user', content: message });
+  const createChatSession = (historyRef: React.MutableRefObject<PollinationsMessage[]>): ChatSession => {
+    return {
+      sendMessageStream: async function* ({ message }) {
+        historyRef.current.push({ role: 'user', content: message });
 
-      if (USE_PUTER_GEMINI && isPuterAvailable()) {
-        try {
-          let puterText = '';
-          const stream = streamPuterGemini(historyRef.current);
-          for await (const part of stream) {
-            puterText += part;
-            yield { text: part };
-          }
+        if (USE_PUTER_GEMINI && isPuterAvailable()) {
+          try {
+            let puterText = '';
+            const stream = streamPuterGemini(historyRef.current);
+            for await (const part of stream) {
+              puterText += part;
+              yield { text: part };
+            }
 
-          if (puterText.trim()) {
-            historyRef.current.push({ role: 'assistant', content: puterText });
-            return;
+            if (puterText.trim()) {
+              historyRef.current.push({ role: 'assistant', content: puterText });
+              return;
+            }
+          } catch (error) {
+            console.warn('Puter stream failed, fallback to text API:', error);
           }
-        } catch (error) {
-          console.warn('Puter stream failed, fallback to text API:', error);
         }
-      }
 
-      const fullText = await withRetry(() => callTextAI(historyRef.current));
-      historyRef.current.push({ role: 'assistant', content: fullText });
-      yield { text: fullText };
-    }
-  });
+        const fullText = await withRetry(() => callTextAI(historyRef.current));
+        historyRef.current.push({ role: 'assistant', content: fullText });
+        yield { text: fullText };
+      },
+    };
+  };
 
   const parseMarkup = (text: string) => {
     const rhythmMatch = text.match(/\[RHYTHM:\s*(.*?)\]/);
