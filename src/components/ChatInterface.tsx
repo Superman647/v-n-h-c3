@@ -416,6 +416,7 @@ export function ChatInterface({ poem, author, onBack }: ChatInterfaceProps) {
       console.warn('ElevenLabs TTS unavailable:', error);
       task.isFailed = true;
       setTtsError('TTS đang lỗi ở cả ElevenLabs và fallback miễn phí, nên tạm thời chưa phát được âm thanh.');
+      setTtsError('Giọng ElevenLabs đang lỗi hoặc thiếu API key, nên tạm thời không phát được âm thanh.');
     } finally {
       task.isFetching = false;
       playNextAudio();
