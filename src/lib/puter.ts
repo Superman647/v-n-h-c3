@@ -16,22 +16,29 @@ const buildPrompt = (messages: ChatMessage[]): string => {
   return messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n');
 };
 
-const extractText = (response: any): string => {
+const extractText = (response: any, shouldTrim = true): string => {
+  const normalize = (value: string): string => (shouldTrim ? value.trim() : value);
+
   if (!response) return '';
-  if (typeof response === 'string') return response.trim();
-  if (typeof response?.message?.content === 'string') return response.message.content.trim();
-  if (typeof response?.content === 'string') return response.content.trim();
-  if (typeof response?.text === 'string') return response.text.trim();
+  if (typeof response === 'string') return normalize(response);
+  if (typeof response?.message?.content === 'string') return normalize(response.message.content);
+  if (typeof response?.content === 'string') return normalize(response.content);
+  if (typeof response?.text === 'string') return normalize(response.text);
+
   if (Array.isArray(response?.choices) && typeof response.choices[0]?.message?.content === 'string') {
-    return response.choices[0].message.content.trim();
+    return normalize(response.choices[0].message.content);
   }
+
   if (Array.isArray(response?.output)) {
     return response.output
       .map((item: any) => item?.content || item?.text || '')
       .filter(Boolean)
+      .join('\n');
+    return normalize(combined);
       .join('\n')
       .trim();
   }
+
   return '';
 };
 
@@ -81,7 +88,7 @@ export const streamPuterGemini = async function* (
       let emitted = false;
 
       for await (const part of response) {
-        const text = extractText(part);
+        const text = extractText(part, false);
         if (text) {
           emitted = true;
           yield text;
