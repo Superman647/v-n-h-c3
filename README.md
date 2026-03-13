@@ -39,6 +39,7 @@
 - Nếu deploy static host, app mặc định gọi trực tiếp Pollinations để tránh `/api/chat` 404.
 - Nếu deploy trên Vercel và muốn ưu tiên serverless route, set `VITE_USE_LOCAL_API=true`.
 - Cần set `ELEVENLABS_API_KEY` (Project Settings -> Environment Variables) để bật giọng ElevenLabs.
+- Có thể tùy chọn `ELEVENLABS_VOICE_ID` (server) hoặc `VITE_ELEVENLABS_VOICE_ID` (client) để đổi voice ID.
 ## Deploy notes
 
 - Đã nhúng Puter SDK ở `index.html` qua `https://js.puter.com/v2/`.
@@ -47,6 +48,7 @@
 - Nếu deploy static host, app mặc định gọi trực tiếp Pollinations để tránh `/api/chat` 404.
 - Nếu deploy trên Vercel và muốn ưu tiên serverless route, set `VITE_USE_LOCAL_API=true`.
 - Cần set `ELEVENLABS_API_KEY` (Project Settings -> Environment Variables) để bật giọng ElevenLabs.
+- Có thể tùy chọn `ELEVENLABS_VOICE_ID` (server) hoặc `VITE_ELEVENLABS_VOICE_ID` (client) để đổi voice ID.
 App mặc định gọi trực tiếp Pollinations để tránh lỗi `/api/chat` 404 trên static host.
 
 Nếu deploy trên Vercel và muốn ưu tiên serverless route, set `VITE_USE_LOCAL_API=true`.
@@ -57,3 +59,31 @@ Nếu deploy trên Vercel và muốn ưu tiên serverless route, set `VITE_USE_L
 - Có thể set `VITE_TEXT_API_BASE` (ví dụ: `https://text.pollinations.ai`) để đổi text endpoint.
 - Cần set `ELEVENLABS_API_KEY` (Project Settings -> Environment Variables trên Vercel) để bật giọng ElevenLabs.
 - Nếu ElevenLabs lỗi/quá hạn mức, app sẽ fallback sang `window.speechSynthesis`.
+
+
+## Troubleshooting: npm install bị chặn (403)
+
+Nếu gặp lỗi kiểu `npm install ...` trả về `403 Forbidden` như môi trường này, nguyên nhân thường là proxy/chính sách registry của hệ thống đang chặn tải package mới.
+
+Các bước kiểm tra nhanh:
+
+```bash
+npm config list
+npm config get registry
+npm view @elevenlabs/elevenlabs-js version
+```
+
+Cách xử lý:
+
+1. Nếu bạn có quyền sửa proxy nội bộ, bỏ proxy rồi thử lại:
+
+```bash
+npm config delete proxy
+npm config delete https-proxy
+unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
+npm install
+```
+
+2. Nếu công ty dùng policy chặn từ registry, cần nhờ admin **allowlist** package (`@elevenlabs/elevenlabs-js`) hoặc mirror vào private registry.
+
+3. Trong lúc chờ mở policy, app này đã hỗ trợ gọi ElevenLabs qua REST API server-side (`api/tts.ts`) nên **không bắt buộc** phải cài SDK để chạy được TTS.
