@@ -1,4 +1,5 @@
-const FPT_KEY = 'IUUGMkDMX7cMAjfNnISBAJ64pkLP7q70';
+const XI_API_KEY = 'deaa774bedb654e1a9adf6ef823335b3ec9cf705b20934e601e4dd8906e1632c';
+const VOICE_ID   = '5vqV9IG7sDpzgzKOIZAv';
 
 export const config = { api: { bodyParser: false } };
 
@@ -16,8 +17,6 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
-  const apiKey = (process.env.FPT_TTS_API_KEY?.trim()) || FPT_KEY;
-
   let text = '';
   try {
     const raw = await readBody(req);
@@ -31,37 +30,41 @@ export default async function handler(req: any, res: any) {
   const timeout = setTimeout(() => controller.abort(), 30000);
 
   try {
-    const fptRes = await fetch('https://api.fpt.ai/hmi/tts/v5', {
-      method: 'POST',
-      headers: { 'api-key': apiKey, 'voice': 'linhsan', 'speed': '' },
-      body: text,
-      signal: controller.signal,
-    });
+    const xiRes = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`,
+      {
+        method: 'POST',
+        headers: {
+          'xi-api-key': XI_API_KEY,
+          'Content-Type': 'application/json',
+          'Accept': 'audio/mpeg',
+        },
+        body: JSON.stringify({
+          text,
+          model_id: 'eleven_multilingual_v2',
+          output_format: 'mp3_44100_128',
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.8,
+            style: 0.3,
+            use_speaker_boost: true,
+          },
+        }),
+        signal: controller.signal,
+      }
+    );
 
-    if (!fptRes.ok) {
-      const err = await fptRes.text();
-      res.status(502).json({ error: `FPT ${fptRes.status}: ${err}` });
+    if (!xiRes.ok) {
+      const err = await xiRes.text();
+      res.status(502).json({ error: `ElevenLabs ${xiRes.status}: ${err}` });
       return;
     }
 
-    const json = await fptRes.json();
-    const audioUrl: string | undefined = json?.async;
-    if (!audioUrl) { res.status(502).json({ error: `No URL: ${JSON.stringify(json)}` }); return; }
-
-    for (let i = 0; i < 10; i++) {
-      await new Promise(r => setTimeout(r, i === 0 ? 1200 : 1500));
-      try {
-        const r = await fetch(audioUrl, { signal: controller.signal });
-        if (r.ok) {
-          const buf = await r.arrayBuffer();
-          res.setHeader('Content-Type', 'audio/mpeg');
-          res.setHeader('Cache-Control', 'no-store');
-          res.status(200).send(Buffer.from(buf));
-          return;
-        }
-      } catch { /* retry */ }
-    }
-    res.status(502).json({ error: 'FPT: no audio after retries' });
+    const buf = await xiRes.arrayBuffer();
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-TTS-Provider', 'elevenlabs');
+    res.status(200).send(Buffer.from(buf));
 
   } catch (err: any) {
     res.status(502).json({ error: err?.name === 'AbortError' ? 'Timeout' : err?.message });
